@@ -33,6 +33,11 @@ linters:
       # G705: XSS taint false positive on internal HTTP handler writes.
       - linters: [gosec]
         text: 'G705'
+      # G704: SSRF false positive; the URL is always localhost, with only the
+      # port number taken from the PORT environment variable.
+      - path: cmd/plimsoll-indexer/main\.go
+        linters: [gosec]
+        text: 'G704'
       # Test files: suppress deprecated-API warnings and naming-convention nits.
       - path: _test\.go
         linters: [gosec, errcheck, staticcheck]
