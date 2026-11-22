@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -28,6 +29,9 @@ import (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "verify" {
 		os.Exit(runVerifyCommand(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(runHealthcheck())
 	}
 
 	cfg, err := config.Load()
@@ -187,6 +191,34 @@ func every(ctx context.Context, interval time.Duration, log *slog.Logger, fn fun
 		case <-ticker.C:
 		}
 	}
+}
+
+// runHealthcheck requests /healthz on the local server and exits 0 on success
+// or 1 on any failure. It honours the PORT environment variable so it matches
+// whatever port the container is actually listening on.
+func runHealthcheck() int {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+port+"/healthz", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+		return 1
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "healthcheck: status %d\n", resp.StatusCode)
+	return 1
 }
 
 func newLogger(level string) *slog.Logger {

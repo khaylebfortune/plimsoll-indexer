@@ -95,3 +95,207 @@ func TestUnknownNetwork(t *testing.T) {
 		t.Fatalf("want unknown network error, got %v", err)
 	}
 }
+
+// TestLoadDefaults verifies that all optional fields carry their documented
+// defaults when only the required variables are set.
+func TestLoadDefaults(t *testing.T) {
+	setBase(t)
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Port != "8080" {
+		t.Errorf("Port = %q, want 8080", got.Port)
+	}
+	if got.LogLevel != "info" {
+		t.Errorf("LogLevel = %q, want info", got.LogLevel)
+	}
+	if len(got.CORSOrigins) != 1 || got.CORSOrigins[0] != "*" {
+		t.Errorf("CORSOrigins = %v, want [*]", got.CORSOrigins)
+	}
+	if got.IngestInterval.String() != "10s" {
+		t.Errorf("IngestInterval = %v, want 10s", got.IngestInterval)
+	}
+	if got.PostInterval.String() != "15m0s" {
+		t.Errorf("PostInterval = %v, want 15m0s", got.PostInterval)
+	}
+	if got.ReconcileInterval.String() != "15m0s" {
+		t.Errorf("ReconcileInterval = %v, want 15m0s", got.ReconcileInterval)
+	}
+	if got.RepostAfter.String() != "6h0m0s" {
+		t.Errorf("RepostAfter = %v, want 6h0m0s", got.RepostAfter)
+	}
+	if got.TomlInterval.String() != "6h0m0s" {
+		t.Errorf("TomlInterval = %v, want 6h0m0s", got.TomlInterval)
+	}
+	if got.KeepAwakeInterval.String() != "10m0s" {
+		t.Errorf("KeepAwakeInterval = %v, want 10m0s", got.KeepAwakeInterval)
+	}
+}
+
+// TestLoadRequiredMissing checks that each required variable produces an error
+// when absent, and that all missing variables are reported together.
+func TestLoadRequiredMissing(t *testing.T) {
+	required := []struct {
+		key     string
+		wantMsg string
+	}{
+		{"DATABASE_URL", "DATABASE_URL is required"},
+		{"COVERAGE_LEDGER_ID", "COVERAGE_LEDGER_ID is required"},
+		{"REPORTER_REGISTRY_ID", "REPORTER_REGISTRY_ID is required"},
+	}
+
+	// Each variable alone.
+	for _, r := range required {
+		t.Run(r.key, func(t *testing.T) {
+			setBase(t)
+			t.Setenv(r.key, "")
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() = nil error, want error containing %q", r.wantMsg)
+			}
+			if !strings.Contains(err.Error(), r.wantMsg) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), r.wantMsg)
+			}
+		})
+	}
+
+	// All required variables absent at once — all messages must appear together.
+	t.Run("all_missing", func(t *testing.T) {
+		setBase(t)
+		t.Setenv("DATABASE_URL", "")
+		t.Setenv("COVERAGE_LEDGER_ID", "")
+		t.Setenv("REPORTER_REGISTRY_ID", "")
+		_, err := Load()
+		if err == nil {
+			t.Fatal("Load() = nil error, want combined error")
+		}
+		for _, r := range required {
+			if !strings.Contains(err.Error(), r.wantMsg) {
+				t.Errorf("combined error missing %q: %v", r.wantMsg, err)
+			}
+		}
+	})
+}
+
+// TestLoadBadDurations checks that each malformed duration variable is reported.
+func TestLoadBadDurations(t *testing.T) {
+	durationVars := []string{
+		"INGEST_INTERVAL",
+		"POST_INTERVAL",
+		"RECONCILE_INTERVAL",
+		"REPOST_AFTER",
+		"TOML_INTERVAL",
+		"KEEP_AWAKE_INTERVAL",
+	}
+	for _, v := range durationVars {
+		t.Run(v, func(t *testing.T) {
+			setBase(t)
+			t.Setenv(v, "notaduration")
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() = nil error with bad %s", v)
+			}
+			if !strings.Contains(err.Error(), v) {
+				t.Errorf("error = %q, want it to mention %q", err.Error(), v)
+			}
+		})
+	}
+}
+
+// TestLoadCORSParsing checks that CORS_ORIGINS is split on commas and trimmed.
+func TestLoadCORSParsing(t *testing.T) {
+	cases := []struct {
+		value string
+		want  []string
+	}{
+		{"*", []string{"*"}},
+		{"https://app.example.com", []string{"https://app.example.com"}},
+		{"https://a.example.com,https://b.example.com", []string{"https://a.example.com", "https://b.example.com"}},
+		{"  https://a.example.com ,  https://b.example.com  ", []string{"https://a.example.com", "https://b.example.com"}},
+	}
+	for _, c := range cases {
+		t.Run(c.value, func(t *testing.T) {
+			setBase(t)
+			t.Setenv("CORS_ORIGINS", c.value)
+			got, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			if len(got.CORSOrigins) != len(c.want) {
+				t.Fatalf("CORSOrigins = %v, want %v", got.CORSOrigins, c.want)
+			}
+			for i, o := range got.CORSOrigins {
+				if o != c.want[i] {
+					t.Errorf("CORSOrigins[%d] = %q, want %q", i, o, c.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestKeepAwakeURLIntegration tests all four KEEP_AWAKE_URL cases through Load.
+func TestKeepAwakeURLIntegration(t *testing.T) {
+	cases := []struct {
+		name           string
+		keepAwake      string
+		renderExternal string
+		want           string
+	}{
+		{
+			name: "neither set",
+		},
+		{
+			name:           "render_external_url_derived",
+			renderExternal: "https://plimsoll-indexer.onrender.com",
+			want:           "https://plimsoll-indexer.onrender.com/healthz",
+		},
+		{
+			name:           "explicit_overrides_render",
+			keepAwake:      "https://example.org/ping",
+			renderExternal: "https://x.onrender.com",
+			want:           "https://example.org/ping",
+		},
+		{
+			name:           "none_disables",
+			keepAwake:      "none",
+			renderExternal: "https://x.onrender.com",
+			want:           "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setBase(t)
+			t.Setenv("KEEP_AWAKE_URL", c.keepAwake)
+			t.Setenv("RENDER_EXTERNAL_URL", c.renderExternal)
+			got, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			if got.KeepAwakeURL != c.want {
+				t.Errorf("KeepAwakeURL = %q, want %q", got.KeepAwakeURL, c.want)
+			}
+		})
+	}
+}
+
+// TestPostingEnabled verifies the PostingEnabled predicate.
+func TestPostingEnabled(t *testing.T) {
+	setBase(t)
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PostingEnabled() {
+		t.Error("PostingEnabled() = true with no SUPPLY_POSTER_SECRET, want false")
+	}
+
+	t.Setenv("SUPPLY_POSTER_SECRET", "SCZANGBA5TTPJQS62SL7TURZT5FSZMR3TCZDWNBEBGCMQK3JLYLUVRMJ")
+	got, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.PostingEnabled() {
+		t.Error("PostingEnabled() = false with SUPPLY_POSTER_SECRET set, want true")
+	}
+}

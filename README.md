@@ -108,17 +108,34 @@ Running it in production? See the [operations runbook](docs/runbook.md).
 
 ## Docker
 
-Prefer containers? Build a distroless image and run with Compose (Postgres +
-indexer, testnet defaults):
+A pre-built multi-arch image is published to the GitHub Container Registry on
+every release tag:
 
 ```bash
-docker compose up --build
+docker pull ghcr.io/plimsoll-protocol/plimsoll-indexer:latest
+```
+
+Run the full local stack (Postgres + indexer, testnet defaults) with Compose:
+
+```bash
+docker compose up
 curl localhost:8080/healthz
 ```
+
+To build the image locally instead, replace the `image:` line in
+`docker-compose.yml` with `build: .` and run `docker compose up --build`.
 
 The image is multi-stage (`golang:1.27-bookworm` → `gcr.io/distroless/static-debian12`)
 and stays well under 30 MB. Leave `SUPPLY_POSTER_SECRET` empty in
 `docker-compose.yml` for a read-only run.
+
+The binary includes a `healthcheck` subcommand used by the Docker
+`HEALTHCHECK` instruction and by the Compose file. It requests `/healthz` on
+`localhost` (honouring `PORT`) and exits 0 on success or 1 on failure:
+
+```bash
+plimsoll-indexer healthcheck
+```
 
 ## Deploying
 
