@@ -1,0 +1,36 @@
+name: fix-vulns
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Upgrade vulnerable dependencies
+        run: |
+          go get github.com/klauspost/compress@v1.20.2
+          go get golang.org/x/text@v0.41.0
+          go mod tidy
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add go.mod go.sum
+          git diff --cached --quiet || git commit -m "fix(deps): upgrade compress to v1.20.2 and x/text to v0.41.0
+
+Fixes GO-2026-6865 (klauspost/compress < v1.20.2) and
+GO-2026-6629 / GO-2026-5970 (golang.org/x/text < v0.41.0)
+found by govulncheck.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+          git push
